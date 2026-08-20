@@ -42,11 +42,27 @@ module.exports = async (req, res) => {
             // 1. Fetch full task details from ClickUp
             const taskData = await getTask(payload.task_id);
             
-            // 2. Map to Shopify Payload
+            // 2. ACT AS A LOCK: Check if the live task status is STILL "Ready to Publish"
+            const liveStatusField = taskData.custom_fields?.find(f => f.id === PRODUCT_STATUS_FIELD_ID);
+            const liveStatusOption = liveStatusField?.type_config?.options?.find(o => o.orderindex === liveStatusField.value);
+            
+            if (!liveStatusOption || liveStatusOption.id !== READY_TO_PUBLISH_OPTION_ID) {
+               console.log(`Task ${payload.task_id} is no longer 'Ready to Publish' (Current: ${liveStatusOption?.name}). Aborting to prevent duplicate retry.`);
+               return res.status(200).json({ success: true, message: "Aborted: Task already processing or processed." });
+            }
+            
+            // 3. IMMEDIATELY lock the task by setting it to "Published" to prevent ClickUp retries from running
+            const publishedOption = liveStatusField?.type_config?.options?.find(o => o.name.toLowerCase() === 'published');
+            if (publishedOption) {
+               await updateCustomField(payload.task_id, PRODUCT_STATUS_FIELD_ID, publishedOption.id);
+               console.log("Locked task by setting status to Published.");
+            }
+            
+            // 4. Map to Shopify Payload
             const shopifyPayload = mapClickupToShopify(taskData);
             console.log("Mapped Shopify Payload:", JSON.stringify(shopifyPayload, null, 2));
             
-            // 3. Check if product already exists in Shopify
+            // 5. Check if product already exists in Shopify
             const existingProduct = await findProductByTitle(shopifyPayload.title);
             
             if (existingProduct) {
@@ -57,27 +73,15 @@ module.exports = async (req, res) => {
               return res.status(200).json({ success: true, message: "Product already exists, skipped.", shopifyProductId: existingProduct.id });
             }
 
-            // 4. Send to Shopify
+            // 6. Send to Shopify (This can take 5-10s if downloading many images)
             const createdProduct = await createProduct(shopifyPayload);
             console.log(`Successfully created Shopify Product ID: ${createdProduct.id}`);
             
-            // 5. Post feedback comment and change Custom Field to "Published"
+            // 7. Post feedback comment to ClickUp
             const productUrl = `https://${process.env.SHOPIFY_DOMAIN}/admin/products/${createdProduct.id}`;
-          
-            const publishedOption = taskData.custom_fields
-              .find(f => f.id === PRODUCT_STATUS_FIELD_ID)
-              ?.type_config?.options?.find(o => o.name.toLowerCase() === 'published');
-              
-            const updatePromises = [
-              postComment(payload.task_id, `✅ Successfully synced to Shopify!\nView product: ${productUrl}`)
-            ];
+            await postComment(payload.task_id, `✅ Successfully synced to Shopify!\nView product: ${productUrl}`);
             
-            if (publishedOption) {
-              updatePromises.push(updateCustomField(payload.task_id, PRODUCT_STATUS_FIELD_ID, publishedOption.id));
-            }
-            
-            await Promise.all(updatePromises);
-            console.log(`Successfully updated task to Published and left comment.`);
+            console.log(`Successfully finished processing.`);
 
             return res.status(200).json({ success: true, message: "Product synced to Shopify", shopifyProductId: createdProduct.id });
           } catch (syncError) {
