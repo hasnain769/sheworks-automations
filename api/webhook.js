@@ -1,4 +1,4 @@
-const { getTask, postComment } = require('../src/services/clickupApi');
+const { getTask, postComment, updateTaskStatus } = require('../src/services/clickupApi');
 const { createProduct, findProductByTitle } = require('../src/services/shopifyApi');
 const { mapClickupToShopify } = require('../src/mappers/productMapper');
 
@@ -61,6 +61,10 @@ module.exports = async (req, res) => {
           const productUrl = `https://${process.env.SHOPIFY_DOMAIN}/admin/products/${createdProduct.id}`;
           await postComment(payload.task_id, `✅ Successfully synced to Shopify!\nView product: ${productUrl}`);
           
+          // 6. Change the standard ClickUp Task Status to "publish"
+          await updateTaskStatus(payload.task_id, 'publish');
+          console.log(`Successfully updated task status to publish`);
+
           return res.status(200).json({ success: true, message: "Product synced to Shopify", shopifyProductId: createdProduct.id });
         }
       }

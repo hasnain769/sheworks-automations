@@ -15,9 +15,9 @@ const payload = {
 };
 
 async function run() {
-  console.log("Sending simulated webhook to local server...");
+  console.log("Sending simulated webhook to vercel...");
   try {
-    const res = await axios.post('http://localhost:3000/api/webhook', payload);
+    const res = await axios.post('https://sheworks-automations-48ic.vercel.app/api/webhook', payload);
     console.log("Server Response:", res.data);
   } catch (error) {
     console.error("Error from server:", error.response ? error.response.data : error.message);

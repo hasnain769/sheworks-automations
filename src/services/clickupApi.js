@@ -44,7 +44,24 @@ async function postComment(taskId, commentText) {
   }
 }
 
+/**
+ * Updates the standard status of a ClickUp task.
+ * @param {string} taskId 
+ * @param {string} statusName 
+ */
+async function updateTaskStatus(taskId, statusName) {
+  try {
+    await clickupClient.put(`/task/${taskId}`, {
+      status: statusName
+    });
+  } catch (error) {
+    console.error("ClickUp API Error (updateTaskStatus):", error.response ? error.response.data : error.message);
+    throw error;
+  }
+}
+
 module.exports = {
   getTask,
-  postComment
+  postComment,
+  updateTaskStatus
 };
