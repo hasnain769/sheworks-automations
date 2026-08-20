@@ -9,7 +9,7 @@ function mapClickupToShopify(task) {
   // Extract primitive values
   const getFieldValue = (name) => {
     const field = getField(name);
-    if (!field || field.value === undefined) return null;
+    if (!field || field.value === undefined || field.value === null) return null;
     if (field.type === 'drop_down') {
       const optionIndex = field.value;
       const option = field.type_config?.options?.find(o => o.orderindex === optionIndex);
@@ -17,7 +17,7 @@ function mapClickupToShopify(task) {
     }
     if (field.type === 'labels') {
       const optionIds = field.value; // array of ids
-      const labels = optionIds.map(id => field.type_config?.options?.find(o => o.id === id)?.label).filter(Boolean);
+      const labels = optionIds.map(id => field.type_config?.options?.find(o => o.id === id)?.label || field.type_config?.options?.find(o => o.id === id)?.name).filter(Boolean);
       return labels;
     }
     return field.value;
@@ -37,38 +37,80 @@ function mapClickupToShopify(task) {
     return images;
   };
 
-  // 1. Title & Description
-  const title = task.name || "Untitled Product";
+  // 1. Title
+  const shirtName = getFieldValue("Shirt Name");
+  const title = shirtName ? String(shirtName).trim() : (task.name || "Untitled Product");
+  
+  // 2. Body HTML (Description)
+  const sections = [];
   
   const productDescription = getFieldValue("Product Description") || getFieldValue("Product Story");
-  const body_html = productDescription ? `<p>${productDescription}</p>` : (task.description || "");
-
-  // 2. Tags / Vendor
-  let craftTags = getFieldValue("Craft");
-  if (craftTags && typeof craftTags === 'string') craftTags = [craftTags];
-  else if (!craftTags) craftTags = [];
+  if (productDescription) sections.push(`<p>${productDescription}</p>`);
   
-  const fabricType = getFieldValue("Fabric Type");
-  const tags = [...craftTags];
-  if (fabricType) tags.push(fabricType);
+  const conceptNote = getFieldValue("Concept Note");
+  if (conceptNote) sections.push(`<h4>Concept Note</h4><p>${conceptNote}</p>`);
+  
+  const storyToTell = getFieldValue("Story to Tell");
+  if (storyToTell) sections.push(`<h4>Story to Tell</h4><p>${storyToTell}</p>`);
+  
+  const washingInstructions = getFieldValue("Washing Instructions");
+  if (washingInstructions) sections.push(`<h4>Washing Instructions</h4><p>${washingInstructions}</p>`);
+  
+  const careInstructions = getFieldValue("Care Instructions");
+  if (careInstructions) sections.push(`<h4>Care Instructions</h4><p>${careInstructions}</p>`);
+  
+  const body_html = sections.length > 0 ? sections.join("\n") : (task.description || "");
 
-  // 3. Images
-  // Assuming ClickUp uses these field names for images based on common practice
+  // 3. Product Type
+  const product_type = getFieldValue("Silhouette") || getFieldValue("Category") || "";
+
+  // 4. Tags
+  const tagFields = [
+    "Craft", "Fabric Type", "Colour", "Collection / Capsule", 
+    "Occasion collection", "Technique Used", "Hashtags", "Tags", "Keywords"
+  ];
+  
+  const allTags = new Set();
+  tagFields.forEach(fieldName => {
+    let val = getFieldValue(fieldName);
+    if (!val) return;
+    
+    // Some fields might return an array (like Labels) or a string
+    if (typeof val === 'string') {
+      // Split by comma if the user typed comma-separated tags
+      val.split(',').forEach(t => allTags.add(t.trim()));
+    } else if (Array.isArray(val)) {
+      val.forEach(t => {
+        if (typeof t === 'string') {
+          t.split(',').forEach(subT => allTags.add(subT.trim()));
+        }
+      });
+    }
+  });
+  
+  // Remove empty strings
+  allTags.delete("");
+  const tags = Array.from(allTags).join(", ");
+
+  // 5. Images
   const images = extractImages(["Front", "Back", "Close-ups", "Detail Shots", "Product Images"]);
 
-  // 4. Price & Variants
+  // 6. Price & Variants
   const priceVal = getFieldValue("Price");
   const price = priceVal !== null && priceVal !== undefined ? String(priceVal) : "0.00";
-  const sizeOption = getField("Size") || getField("SIZE");
+  
+  const skuVal = getFieldValue("Product Code / SKU");
+  const sku = skuVal ? String(skuVal).trim() : "";
   
   let variants = [];
   let options = [];
 
-  // Very basic variant mapping (assuming Size is a dropdown or labels field)
   const sizeValues = getFieldValue("Size") || getFieldValue("SIZE");
+  
   if (sizeValues && Array.isArray(sizeValues) && sizeValues.length > 0) {
     options.push({ name: "Size", values: sizeValues.map(String) });
     variants = sizeValues.map((size) => ({
+      sku: sku,
       option1: String(size),
       price: price,
       inventory_policy: "deny",
@@ -77,13 +119,16 @@ function mapClickupToShopify(task) {
   } else if (sizeValues && (typeof sizeValues === 'string' || typeof sizeValues === 'number')) {
     options.push({ name: "Size", values: [String(sizeValues)] });
     variants = [{
+      sku: sku,
       option1: String(sizeValues),
       price: price,
       inventory_policy: "deny",
       inventory_management: "shopify"
     }];
   } else {
+    // Default single variant
     variants = [{
+      sku: sku,
       price: price,
       inventory_policy: "deny",
       inventory_management: "shopify"
@@ -94,8 +139,9 @@ function mapClickupToShopify(task) {
   const productPayload = {
     title,
     body_html,
-    vendor: "SheWorks Store", // Static for now, could be dynamic
-    tags: tags.join(", "),
+    vendor: "SheWorks Store",
+    product_type,
+    tags,
     status: "draft", // Always default to draft for safety
     images,
     variants,

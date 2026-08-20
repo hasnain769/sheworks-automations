@@ -17,15 +17,18 @@ module.exports = async (req, res) => {
     const payload = req.body;
     console.log("Received ClickUp Webhook:", JSON.stringify(payload, null, 2));
 
-    // Verify it's a custom field update
-    if (payload.event === 'taskCustomFieldUpdated' && payload.task_id) {
+    // Verify it's a task update or custom field update
+    if ((payload.event === 'taskCustomFieldUpdated' || payload.event === 'taskUpdated') && payload.task_id) {
       const historyItem = payload.history_items && payload.history_items[0];
       
       // Ensure the field updated was the PRODUCT STATUS field
-      if (historyItem && historyItem.custom_field && historyItem.custom_field.id === PRODUCT_STATUS_FIELD_ID) {
+      if (
+        historyItem && 
+        (historyItem.custom_field || historyItem.field === 'custom_field') && 
+        (historyItem.custom_field && historyItem.custom_field.id === PRODUCT_STATUS_FIELD_ID)
+      ) {
         
         // Check if the new value is "Ready to Publish"
-        // historyItem.after is often the orderindex for dropdowns, or the actual option UUID.
         const afterValue = historyItem.after; 
         
         if (
@@ -35,37 +38,58 @@ module.exports = async (req, res) => {
         ) {
           console.log(`Task ${payload.task_id} is Ready to Publish! Initiating sync...`);
           
-          // 1. Fetch full task details from ClickUp
-          const taskData = await getTask(payload.task_id);
-          
-          // 2. Map to Shopify Payload
-          const shopifyPayload = mapClickupToShopify(taskData);
-          console.log("Mapped Shopify Payload:", JSON.stringify(shopifyPayload, null, 2));
-          
-          // 3. Check if product already exists in Shopify
-          const existingProduct = await findProductByTitle(shopifyPayload.title);
-          
-          if (existingProduct) {
-            console.log(`Product "${shopifyPayload.title}" already exists in Shopify (ID: ${existingProduct.id}). Skipping creation.`);
-            const productUrl = `https://${process.env.SHOPIFY_DOMAIN}/admin/products/${existingProduct.id}`;
-            await postComment(payload.task_id, `⚠️ Product already exists in Shopify!\nSkipped creation to avoid duplicates.\nView existing product: ${productUrl}`);
+          try {
+            // 1. Fetch full task details from ClickUp
+            const taskData = await getTask(payload.task_id);
             
-            return res.status(200).json({ success: true, message: "Product already exists, skipped.", shopifyProductId: existingProduct.id });
+            // 2. Map to Shopify Payload
+            const shopifyPayload = mapClickupToShopify(taskData);
+            console.log("Mapped Shopify Payload:", JSON.stringify(shopifyPayload, null, 2));
+            
+            // 3. Check if product already exists in Shopify
+            const existingProduct = await findProductByTitle(shopifyPayload.title);
+            
+            if (existingProduct) {
+              console.log(`Product "${shopifyPayload.title}" already exists in Shopify (ID: ${existingProduct.id}). Skipping creation.`);
+              const productUrl = `https://${process.env.SHOPIFY_DOMAIN}/admin/products/${existingProduct.id}`;
+              await postComment(payload.task_id, `⚠️ Product already exists in Shopify!\nSkipped creation to avoid duplicates.\nView existing product: ${productUrl}`);
+              
+              return res.status(200).json({ success: true, message: "Product already exists, skipped.", shopifyProductId: existingProduct.id });
+            }
+
+            // 4. Send to Shopify
+            const createdProduct = await createProduct(shopifyPayload);
+            console.log(`Successfully created Shopify Product ID: ${createdProduct.id}`);
+            
+            // 5. Post feedback comment to ClickUp
+            const productUrl = `https://${process.env.SHOPIFY_DOMAIN}/admin/products/${createdProduct.id}`;
+            await postComment(payload.task_id, `✅ Successfully synced to Shopify!\nView product: ${productUrl}`);
+            
+            // 6. Change the standard ClickUp Task Status to "publish"
+            await updateTaskStatus(payload.task_id, 'publish');
+            console.log(`Successfully updated task status to publish`);
+
+            return res.status(200).json({ success: true, message: "Product synced to Shopify", shopifyProductId: createdProduct.id });
+          } catch (syncError) {
+            console.error(`Sync failed for task ${payload.task_id}:`, syncError.message);
+            
+            // Handle Graceful Error Logging back to ClickUp
+            const errorMessage = syncError.response && syncError.response.data 
+              ? JSON.stringify(syncError.response.data) 
+              : syncError.message;
+              
+            await postComment(payload.task_id, `❌ **Shopify Upload Failed**\nAn error occurred while trying to push this product to Shopify:\n\`\`\`\n${errorMessage}\n\`\`\``);
+            
+            // Change status to Publishing Failed
+            try {
+              await updateTaskStatus(payload.task_id, 'publishing failed');
+            } catch (statusError) {
+              console.error("Could not update task status to publishing failed:", statusError.message);
+            }
+            
+            // Return 200 so ClickUp doesn't disable the webhook
+            return res.status(200).json({ success: false, message: "Sync failed, but error handled gracefully." });
           }
-
-          // 4. Send to Shopify
-          const createdProduct = await createProduct(shopifyPayload);
-          console.log(`Successfully created Shopify Product ID: ${createdProduct.id}`);
-          
-          // 5. Post feedback comment to ClickUp
-          const productUrl = `https://${process.env.SHOPIFY_DOMAIN}/admin/products/${createdProduct.id}`;
-          await postComment(payload.task_id, `✅ Successfully synced to Shopify!\nView product: ${productUrl}`);
-          
-          // 6. Change the standard ClickUp Task Status to "publish"
-          await updateTaskStatus(payload.task_id, 'publish');
-          console.log(`Successfully updated task status to publish`);
-
-          return res.status(200).json({ success: true, message: "Product synced to Shopify", shopifyProductId: createdProduct.id });
         }
       }
     }
@@ -77,6 +101,6 @@ module.exports = async (req, res) => {
     console.error("Webhook Execution Error:", error);
     // Still return 200 to ClickUp so it doesn't disable the webhook due to retries, 
     // unless it's a critical timeout.
-    return res.status(500).json({ success: false, error: error.message });
+    return res.status(200).json({ success: false, error: error.message });
   }
 };
