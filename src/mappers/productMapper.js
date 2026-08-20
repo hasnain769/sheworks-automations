@@ -142,7 +142,7 @@ function mapClickupToShopify(task) {
     vendor: "SheWorks Store",
     product_type,
     tags,
-    status: "draft", // Always default to draft for safety
+    status: "active", // Publish directly to the website
     images,
     variants,
     options: options.length > 0 ? options : undefined
