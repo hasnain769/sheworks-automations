@@ -44,7 +44,10 @@ function mapClickupToShopify(task) {
   const body_html = productDescription ? `<p>${productDescription}</p>` : (task.description || "");
 
   // 2. Tags / Vendor
-  const craftTags = getFieldValue("Craft") || [];
+  let craftTags = getFieldValue("Craft");
+  if (craftTags && typeof craftTags === 'string') craftTags = [craftTags];
+  else if (!craftTags) craftTags = [];
+  
   const fabricType = getFieldValue("Fabric Type");
   const tags = [...craftTags];
   if (fabricType) tags.push(fabricType);
@@ -54,28 +57,27 @@ function mapClickupToShopify(task) {
   const images = extractImages(["Front", "Back", "Close-ups", "Detail Shots", "Product Images"]);
 
   // 4. Price & Variants
-  const price = getFieldValue("Price") || "0.00";
+  const priceVal = getFieldValue("Price");
+  const price = priceVal !== null && priceVal !== undefined ? String(priceVal) : "0.00";
   const sizeOption = getField("Size") || getField("SIZE");
   
   let variants = [];
   let options = [];
 
   // Very basic variant mapping (assuming Size is a dropdown or labels field)
-  // If Size is multi-select labels or multiple dropdowns, we map them to variants.
-  // We'll create a default variant if no sizes are found.
   const sizeValues = getFieldValue("Size") || getFieldValue("SIZE");
   if (sizeValues && Array.isArray(sizeValues) && sizeValues.length > 0) {
-    options.push({ name: "Size", values: sizeValues });
-    variants = sizeValues.map((size, index) => ({
-      option1: size,
+    options.push({ name: "Size", values: sizeValues.map(String) });
+    variants = sizeValues.map((size) => ({
+      option1: String(size),
       price: price,
       inventory_policy: "deny",
       inventory_management: "shopify"
     }));
-  } else if (sizeValues && typeof sizeValues === 'string') {
-    options.push({ name: "Size", values: [sizeValues] });
+  } else if (sizeValues && (typeof sizeValues === 'string' || typeof sizeValues === 'number')) {
+    options.push({ name: "Size", values: [String(sizeValues)] });
     variants = [{
-      option1: sizeValues,
+      option1: String(sizeValues),
       price: price,
       inventory_policy: "deny",
       inventory_management: "shopify"
