@@ -60,8 +60,26 @@ async function updateTaskStatus(taskId, statusName) {
   }
 }
 
+/**
+ * Updates a custom field of a ClickUp task.
+ * @param {string} taskId 
+ * @param {string} fieldId 
+ * @param {*} value 
+ */
+async function updateCustomField(taskId, fieldId, value) {
+  try {
+    await clickupClient.post(`/task/${taskId}/field/${fieldId}`, {
+      value: value
+    });
+  } catch (error) {
+    console.error("ClickUp API Error (updateCustomField):", error.response ? error.response.data : error.message);
+    throw error;
+  }
+}
+
 module.exports = {
   getTask,
   postComment,
-  updateTaskStatus
+  updateTaskStatus,
+  updateCustomField
 };

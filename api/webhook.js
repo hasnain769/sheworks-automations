@@ -1,4 +1,4 @@
-const { getTask, postComment, updateTaskStatus } = require('../src/services/clickupApi');
+const { getTask, postComment, updateCustomField } = require('../src/services/clickupApi');
 const { createProduct, findProductByTitle } = require('../src/services/shopifyApi');
 const { mapClickupToShopify } = require('../src/mappers/productMapper');
 
@@ -61,13 +61,23 @@ module.exports = async (req, res) => {
             const createdProduct = await createProduct(shopifyPayload);
             console.log(`Successfully created Shopify Product ID: ${createdProduct.id}`);
             
-            // 5. Post feedback comment to ClickUp
+            // 5. Post feedback comment and change Custom Field to "Published"
             const productUrl = `https://${process.env.SHOPIFY_DOMAIN}/admin/products/${createdProduct.id}`;
-            await postComment(payload.task_id, `✅ Successfully synced to Shopify!\nView product: ${productUrl}`);
+          
+            const publishedOption = taskData.custom_fields
+              .find(f => f.id === PRODUCT_STATUS_FIELD_ID)
+              ?.type_config?.options?.find(o => o.name.toLowerCase() === 'published');
+              
+            const updatePromises = [
+              postComment(payload.task_id, `✅ Successfully synced to Shopify!\nView product: ${productUrl}`)
+            ];
             
-            // 6. Change the standard ClickUp Task Status to "publish"
-            await updateTaskStatus(payload.task_id, 'publish');
-            console.log(`Successfully updated task status to publish`);
+            if (publishedOption) {
+              updatePromises.push(updateCustomField(payload.task_id, PRODUCT_STATUS_FIELD_ID, publishedOption.id));
+            }
+            
+            await Promise.all(updatePromises);
+            console.log(`Successfully updated task to Published and left comment.`);
 
             return res.status(200).json({ success: true, message: "Product synced to Shopify", shopifyProductId: createdProduct.id });
           } catch (syncError) {
@@ -80,9 +90,15 @@ module.exports = async (req, res) => {
               
             await postComment(payload.task_id, `❌ **Shopify Upload Failed**\nAn error occurred while trying to push this product to Shopify:\n\`\`\`\n${errorMessage}\n\`\`\``);
             
-            // Change status to Publishing Failed
+            // Change Custom Field status to Publishing Failed
             try {
-              await updateTaskStatus(payload.task_id, 'publishing failed');
+              const failedOption = taskData?.custom_fields
+                ?.find(f => f.id === PRODUCT_STATUS_FIELD_ID)
+                ?.type_config?.options?.find(o => o.name.toLowerCase() === 'publishing failed');
+                
+              if (failedOption) {
+                await updateCustomField(payload.task_id, PRODUCT_STATUS_FIELD_ID, failedOption.id);
+              }
             } catch (statusError) {
               console.error("Could not update task status to publishing failed:", statusError.message);
             }
