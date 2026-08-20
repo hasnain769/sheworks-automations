@@ -1,5 +1,5 @@
 const { getTask, postComment } = require('../src/services/clickupApi');
-const { createProduct } = require('../src/services/shopifyApi');
+const { createProduct, findProductByTitle } = require('../src/services/shopifyApi');
 const { mapClickupToShopify } = require('../src/mappers/productMapper');
 
 // The specific ID for the "PRODUCT STATUS" custom field and the "Ready to Publish" option
@@ -42,11 +42,22 @@ module.exports = async (req, res) => {
           const shopifyPayload = mapClickupToShopify(taskData);
           console.log("Mapped Shopify Payload:", JSON.stringify(shopifyPayload, null, 2));
           
-          // 3. Send to Shopify
+          // 3. Check if product already exists in Shopify
+          const existingProduct = await findProductByTitle(shopifyPayload.title);
+          
+          if (existingProduct) {
+            console.log(`Product "${shopifyPayload.title}" already exists in Shopify (ID: ${existingProduct.id}). Skipping creation.`);
+            const productUrl = `https://${process.env.SHOPIFY_DOMAIN}/admin/products/${existingProduct.id}`;
+            await postComment(payload.task_id, `⚠️ Product already exists in Shopify!\nSkipped creation to avoid duplicates.\nView existing product: ${productUrl}`);
+            
+            return res.status(200).json({ success: true, message: "Product already exists, skipped.", shopifyProductId: existingProduct.id });
+          }
+
+          // 4. Send to Shopify
           const createdProduct = await createProduct(shopifyPayload);
           console.log(`Successfully created Shopify Product ID: ${createdProduct.id}`);
           
-          // 4. Post feedback comment to ClickUp
+          // 5. Post feedback comment to ClickUp
           const productUrl = `https://${process.env.SHOPIFY_DOMAIN}/admin/products/${createdProduct.id}`;
           await postComment(payload.task_id, `✅ Successfully synced to Shopify!\nView product: ${productUrl}`);
           
